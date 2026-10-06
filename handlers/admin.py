@@ -29,14 +29,6 @@ class ATopup(StatesGroup):
     amount = State()
 
 
-class ASub(StatesGroup):
-    amount = State()
-
-
-class ASub(StatesGroup):
-    amount = State()
-
-
 class ADec(StatesGroup):
     amount = State()
 
@@ -166,8 +158,6 @@ async def driver_card(did, lang):
     fz = t("a_btn_unfreeze", lang) if d["frozen"] else t("a_btn_freeze", lang)
     markup = kb(
         [B(t("a_btn_addbal", lang), f"dtop:{did}")],
-        [B(t("a_btn_subbal", lang), f"dsub:{did}")],
-        [B(t("a_btn_sub", lang), f"dsub:{did}")],
         [B(t("a_btn_deduct", lang), f"ddec:{did}")],
         [B(t("a_btn_remove", lang), f"drm:{did}")],
         [B(fz, f"dfz:{did}")],
@@ -210,93 +200,6 @@ async def driver_topup_do(m: Message, state: FSMContext, bot: Bot):
     bal = await services.credit(bot, did, amount, "topup_admin", "admin")
     await stk(bot, m.from_user.id, "✅")
     await m.answer(t("a_topped", lang, name_link=ulink(did, d["name"]), amount=fmt(amount), bal=fmt(bal)),
-                   reply_markup=kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
-
-
-@router.callback_query(F.data.startswith("dsub:"))
-async def driver_sub_ask(cb: CallbackQuery, state: FSMContext):
-    did = int(cb.data.split(":")[1])
-    lang = await L(cb.from_user.id)
-    d = await db.get_driver(did)
-    await cb.answer()
-    if not d:
-        return
-    await state.set_state(ASub.amount)
-    await state.update_data(did=did)
-    await reply(cb, t("a_ask_sub", lang, bal=fmt(d["balance"])),
-                kb([B(t("btn_back", lang), f"dv:{did}"), B(t("btn_home", lang), "home")]))
-
-
-@router.message(ASub.amount, F.text)
-async def driver_sub_do(m: Message, state: FSMContext, bot: Bot):
-    lang = await L(m.from_user.id)
-    amount = parse_amount(m.text)
-    if not amount:
-        return await m.answer(t("bad_amount", lang))
-    did = (await state.get_data())["did"]
-    d = await db.get_driver(did)
-    if not d:
-        await state.clear()
-        return await show_home(bot, m.from_user.id, m)
-    n = await db.exr("UPDATE drivers SET balance=balance-? WHERE tg_id=? AND balance>=?", (amount, did, amount))
-    if not n:
-        return await m.answer(t("a_sub_big", lang, bal=fmt(d["balance"])))
-    await state.clear()
-    await db.ex("INSERT INTO transactions(driver_id,amount,kind) VALUES(?,?,'deduct')", (did, -amount))
-    d2 = await db.get_driver(did)
-    dl = await db.get_lang(did)
-    try:
-        await bot.send_message(did, "➖")
-        await bot.send_message(did, t("drv_deducted", dl, amount=fmt(amount), bal=fmt(d2["balance"])))
-    except Exception:
-        pass
-    await services.low_check(bot, did)
-    await stk(bot, m.from_user.id, "✅")
-    await m.answer(t("a_subtracted", lang, name_link=ulink(did, d["name"]), amount=fmt(amount), bal=fmt(d2["balance"])),
-                   reply_markup=kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
-
-
-@router.callback_query(F.data.startswith("dsub:"))
-async def driver_sub_ask(cb: CallbackQuery, state: FSMContext):
-    did = int(cb.data.split(":")[1])
-    lang = await L(cb.from_user.id)
-    d = await db.get_driver(did)
-    await cb.answer()
-    if not d:
-        return
-    await state.set_state(ASub.amount)
-    await state.update_data(did=did)
-    await reply(cb, t("a_ask_sub", lang, bal=fmt(d["balance"])),
-                kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
-
-
-@router.message(ASub.amount, F.text)
-async def driver_sub_do(m: Message, state: FSMContext, bot: Bot):
-    lang = await L(m.from_user.id)
-    amount = parse_amount(m.text)
-    if not amount:
-        return await m.answer(t("bad_amount", lang))
-    did = (await state.get_data())["did"]
-    d = await db.get_driver(did)
-    if not d:
-        await state.clear()
-        return await show_home(bot, m.from_user.id, m)
-    n = await db.exr("UPDATE drivers SET balance=balance-? WHERE tg_id=? AND balance>=?", (amount, did, amount))
-    if not n:
-        d = await db.get_driver(did)
-        return await m.answer(t("a_sub_too_much", lang, bal=fmt(d["balance"])),
-                              reply_markup=kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
-    await state.clear()
-    await db.ex("INSERT INTO transactions(driver_id,amount,kind) VALUES(?,?,?)", (did, -amount, "admin_deduct"))
-    d = await db.get_driver(did)
-    dl = await db.get_lang(did)
-    try:
-        await bot.send_message(did, "➖")
-        await bot.send_message(did, t("drv_deducted", dl, amount=fmt(amount), bal=fmt(d["balance"])))
-    except Exception:
-        pass
-    await services.low_check(bot, did)
-    await m.answer(t("a_subbed", lang, name_link=ulink(did, d["name"]), amount=fmt(amount), bal=fmt(d["balance"])),
                    reply_markup=kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
 
 
