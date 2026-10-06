@@ -19,7 +19,6 @@ router.callback_query.filter(F.from_user.id.in_(config.ADMIN_IDS))
 
 
 class AOrder(StatesGroup):
-    route = State()
     text = State()
     phone = State()
     price = State()
@@ -27,6 +26,18 @@ class AOrder(StatesGroup):
 
 
 class ATopup(StatesGroup):
+    amount = State()
+
+
+class ASub(StatesGroup):
+    amount = State()
+
+
+class ASub(StatesGroup):
+    amount = State()
+
+
+class ADec(StatesGroup):
     amount = State()
 
 
@@ -155,9 +166,12 @@ async def driver_card(did, lang):
     fz = t("a_btn_unfreeze", lang) if d["frozen"] else t("a_btn_freeze", lang)
     markup = kb(
         [B(t("a_btn_addbal", lang), f"dtop:{did}")],
+        [B(t("a_btn_subbal", lang), f"dsub:{did}")],
+        [B(t("a_btn_sub", lang), f"dsub:{did}")],
+        [B(t("a_btn_deduct", lang), f"ddec:{did}")],
         [B(t("a_btn_remove", lang), f"drm:{did}")],
         [B(fz, f"dfz:{did}")],
-        [B(t("btn_back", lang), "dl:0")])
+        [B(t("btn_back", lang), "dl:0"), B(t("btn_home", lang), "home")])
     return text, markup
 
 
@@ -179,7 +193,7 @@ async def driver_topup_ask(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await state.set_state(ATopup.amount)
     await state.update_data(did=did)
-    await reply(cb, t("a_ask_amount", lang), kb([B(t("btn_cancel", lang), f"dv:{did}")]))
+    await reply(cb, t("a_ask_amount", lang), kb([B(t("btn_back", lang), f"dv:{did}"), B(t("btn_home", lang), "home")]))
 
 
 @router.message(ATopup.amount, F.text)
@@ -196,6 +210,131 @@ async def driver_topup_do(m: Message, state: FSMContext, bot: Bot):
     bal = await services.credit(bot, did, amount, "topup_admin", "admin")
     await stk(bot, m.from_user.id, "✅")
     await m.answer(t("a_topped", lang, name_link=ulink(did, d["name"]), amount=fmt(amount), bal=fmt(bal)),
+                   reply_markup=kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
+
+
+@router.callback_query(F.data.startswith("dsub:"))
+async def driver_sub_ask(cb: CallbackQuery, state: FSMContext):
+    did = int(cb.data.split(":")[1])
+    lang = await L(cb.from_user.id)
+    d = await db.get_driver(did)
+    await cb.answer()
+    if not d:
+        return
+    await state.set_state(ASub.amount)
+    await state.update_data(did=did)
+    await reply(cb, t("a_ask_sub", lang, bal=fmt(d["balance"])),
+                kb([B(t("btn_back", lang), f"dv:{did}"), B(t("btn_home", lang), "home")]))
+
+
+@router.message(ASub.amount, F.text)
+async def driver_sub_do(m: Message, state: FSMContext, bot: Bot):
+    lang = await L(m.from_user.id)
+    amount = parse_amount(m.text)
+    if not amount:
+        return await m.answer(t("bad_amount", lang))
+    did = (await state.get_data())["did"]
+    d = await db.get_driver(did)
+    if not d:
+        await state.clear()
+        return await show_home(bot, m.from_user.id, m)
+    n = await db.exr("UPDATE drivers SET balance=balance-? WHERE tg_id=? AND balance>=?", (amount, did, amount))
+    if not n:
+        return await m.answer(t("a_sub_big", lang, bal=fmt(d["balance"])))
+    await state.clear()
+    await db.ex("INSERT INTO transactions(driver_id,amount,kind) VALUES(?,?,'deduct')", (did, -amount))
+    d2 = await db.get_driver(did)
+    dl = await db.get_lang(did)
+    try:
+        await bot.send_message(did, "➖")
+        await bot.send_message(did, t("drv_deducted", dl, amount=fmt(amount), bal=fmt(d2["balance"])))
+    except Exception:
+        pass
+    await services.low_check(bot, did)
+    await stk(bot, m.from_user.id, "✅")
+    await m.answer(t("a_subtracted", lang, name_link=ulink(did, d["name"]), amount=fmt(amount), bal=fmt(d2["balance"])),
+                   reply_markup=kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
+
+
+@router.callback_query(F.data.startswith("dsub:"))
+async def driver_sub_ask(cb: CallbackQuery, state: FSMContext):
+    did = int(cb.data.split(":")[1])
+    lang = await L(cb.from_user.id)
+    d = await db.get_driver(did)
+    await cb.answer()
+    if not d:
+        return
+    await state.set_state(ASub.amount)
+    await state.update_data(did=did)
+    await reply(cb, t("a_ask_sub", lang, bal=fmt(d["balance"])),
+                kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
+
+
+@router.message(ASub.amount, F.text)
+async def driver_sub_do(m: Message, state: FSMContext, bot: Bot):
+    lang = await L(m.from_user.id)
+    amount = parse_amount(m.text)
+    if not amount:
+        return await m.answer(t("bad_amount", lang))
+    did = (await state.get_data())["did"]
+    d = await db.get_driver(did)
+    if not d:
+        await state.clear()
+        return await show_home(bot, m.from_user.id, m)
+    n = await db.exr("UPDATE drivers SET balance=balance-? WHERE tg_id=? AND balance>=?", (amount, did, amount))
+    if not n:
+        d = await db.get_driver(did)
+        return await m.answer(t("a_sub_too_much", lang, bal=fmt(d["balance"])),
+                              reply_markup=kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
+    await state.clear()
+    await db.ex("INSERT INTO transactions(driver_id,amount,kind) VALUES(?,?,?)", (did, -amount, "admin_deduct"))
+    d = await db.get_driver(did)
+    dl = await db.get_lang(did)
+    try:
+        await bot.send_message(did, "➖")
+        await bot.send_message(did, t("drv_deducted", dl, amount=fmt(amount), bal=fmt(d["balance"])))
+    except Exception:
+        pass
+    await services.low_check(bot, did)
+    await m.answer(t("a_subbed", lang, name_link=ulink(did, d["name"]), amount=fmt(amount), bal=fmt(d["balance"])),
+                   reply_markup=kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
+
+
+@router.callback_query(F.data.startswith("ddec:"))
+async def driver_deduct_ask(cb: CallbackQuery, state: FSMContext):
+    did = int(cb.data.split(":")[1])
+    lang = await L(cb.from_user.id)
+    await cb.answer()
+    await state.set_state(ADec.amount)
+    await state.update_data(did=did)
+    await reply(cb, t("a_ask_deduct", lang), kb([B(t("btn_back", lang), f"dv:{did}"), B(t("btn_home", lang), "home")]))
+
+
+@router.message(ADec.amount, F.text)
+async def driver_deduct_do(m: Message, state: FSMContext, bot: Bot):
+    lang = await L(m.from_user.id)
+    amount = parse_amount(m.text)
+    if not amount:
+        return await m.answer(t("bad_amount", lang))
+    did = (await state.get_data())["did"]
+    d = await db.get_driver(did)
+    if not d:
+        await state.clear()
+        return await show_home(bot, m.from_user.id, m)
+    n = await db.exr("UPDATE drivers SET balance=balance-? WHERE tg_id=? AND balance>=?", (amount, did, amount))
+    if not n:
+        return await m.answer(t("a_deduct_more", lang, bal=fmt(d["balance"])))
+    await state.clear()
+    await db.ex("INSERT INTO transactions(driver_id,amount,kind) VALUES(?,?,?)", (did, -amount, "deduct_admin"))
+    d = await db.get_driver(did)
+    dl = await db.get_lang(did)
+    try:
+        await bot.send_message(did, "➖")
+        await bot.send_message(did, t("drv_deducted", dl, amount=fmt(amount), bal=fmt(d["balance"])))
+    except Exception:
+        pass
+    await services.low_check(bot, did)
+    await m.answer(t("a_deducted", lang, name_link=ulink(did, d["name"]), amount=fmt(amount), bal=fmt(d["balance"])),
                    reply_markup=kb([B(t("btn_back", lang), f"dv:{did}")], [B(t("btn_home", lang), "home")]))
 
 
@@ -287,16 +426,8 @@ async def search_do(m: Message, state: FSMContext):
 async def order_start(cb: CallbackQuery, state: FSMContext):
     lang = await L(cb.from_user.id)
     await cb.answer()
-    await state.set_state(AOrder.route)
-    await reply(cb, t("o_route", lang), cancel_kb(lang))
-
-
-@router.message(AOrder.route, F.text)
-async def order_route(m: Message, state: FSMContext):
-    lang = await L(m.from_user.id)
-    await state.update_data(route=m.text.strip()[:200])
     await state.set_state(AOrder.text)
-    await m.answer(t("o_text", lang), reply_markup=cancel_kb(lang))
+    await reply(cb, t("o_text", lang), cancel_kb(lang))
 
 
 @router.message(AOrder.text, F.text)
@@ -330,7 +461,7 @@ async def order_price(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AOrder.confirm)
     d = await state.get_data()
     await cb.answer()
-    await reply(cb, t("o_preview", lang, route=esc(d["route"]), text=esc(d["text"]), phone=esc(d["phone"]),
+    await reply(cb, t("o_preview", lang, text=esc(d["text"]), phone=esc(d["phone"]),
                       price=fmt(price)),
                 kb([B(t("btn_approve", lang), "ord_ok"), B(t("btn_reject", lang), "home")]))
 
@@ -342,7 +473,7 @@ async def order_confirm(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await state.clear()
     oid = await db.ex("""INSERT INTO orders(route,text,phone,price,source,creator_id,status)
                          VALUES(?,?,?,?, 'admin',?, 'open')""",
-                      (d["route"], d["text"], d["phone"], d["price"], cb.from_user.id))
+                      ('', d["text"], d["phone"], d["price"], cb.from_user.id))
     await cb.answer()
     try:
         await services.post_order(bot, oid)

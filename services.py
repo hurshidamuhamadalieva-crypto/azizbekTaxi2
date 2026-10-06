@@ -4,7 +4,7 @@ import logging
 from aiogram import Bot
 import config
 import db
-from i18n import t
+from i18n import t, to_cyr
 from utils import B, kb, fmt, esc, ulink, contact_btn
 
 LOCK = asyncio.Lock()
@@ -90,12 +90,12 @@ async def queue_text(oid):
 
 async def render_group(o):
     route = f"📍 {esc(o['route'])}\n" if o["route"] else ""
-    txt = t("g_order", "uz", id=o["id"], route=route, text=esc(o["text"]), queue=await queue_text(o["id"]))
+    txt = t("g_order", "cr", id=o["id"], route=route, text=esc(o["text"]), queue=await queue_text(o["id"]))
     if o["status"] == "accepted":
         d = await db.get_driver(o["accepted_by"])
-        txt += t("g_accepted", "uz", link=ulink(o["accepted_by"], d["name"] if d else "Shofyor"))
+        txt += t("g_accepted", "cr", link=ulink(o["accepted_by"], d["name"] if d else "Shofyor"))
     elif o["status"] == "cancelled":
-        txt += t("g_cancelled", "uz")
+        txt += t("g_cancelled", "cr")
     return txt
 
 
