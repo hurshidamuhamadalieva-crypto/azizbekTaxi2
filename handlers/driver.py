@@ -46,7 +46,7 @@ async def role_driver(cb: CallbackQuery, state: FSMContext, bot: Bot):
     lang = await db.get_lang(cb.from_user.id)
     await cb.answer()
     d = await db.get_driver(cb.from_user.id)
-    if d:
+    if d and d["status"] != "removed":
         return await show_home(bot, cb.from_user.id, cb)
     await ensure_user(cb.from_user)
     await db.ex("UPDATE users SET role='driver' WHERE tg_id=?", (cb.from_user.id,))
@@ -80,9 +80,9 @@ async def reg_phone(m: Message, state: FSMContext, bot: Bot):
 async def reg_name(m: Message, state: FSMContext):
     lang = await db.get_lang(m.from_user.id)
     name = m.text.strip()
-    if len(name) < 3 or name.startswith("/"):
+    if len(name) < 2 or name.startswith("/"):
         return await m.answer(t("bad_name", lang))
-    await state.update_data(name=name[:80])
+    await state.update_data(name=name[:40])
     await state.set_state(Reg.confirm)
     data = await state.get_data()
     await m.answer(t("saved", lang))
@@ -98,9 +98,15 @@ async def reg_send(cb: CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data()
     await state.clear()
     uid = cb.from_user.id
-    await db.ex("""INSERT OR REPLACE INTO drivers(tg_id,name,phone,username,status,frozen,balance,low_warned,group_sent)
-                   VALUES(?,?,?,?, 'pending',0,0,0,0)""",
-                (uid, data["name"], data["phone"], cb.from_user.username))
+    old = await db.get_driver(uid)
+    if old and old["status"] == "removed":
+        # avval chiqarilgan shofyor qayta ariza yuboryapti (balansi saqlanadi)
+        await db.ex("UPDATE drivers SET name=?, phone=?, username=?, status='pending', frozen=0 WHERE tg_id=?",
+                    (data["name"], data["phone"], cb.from_user.username, uid))
+    else:
+        await db.ex("""INSERT OR REPLACE INTO drivers(tg_id,name,phone,username,status,frozen,balance,low_warned,group_sent)
+                       VALUES(?,?,?,?, 'pending',0,0,0,0)""",
+                    (uid, data["name"], data["phone"], cb.from_user.username))
     await cb.answer()
     await reply(cb, t("drv_sent", lang), kb([contact_btn(lang)]))
     await stk(bot, uid, "📨")

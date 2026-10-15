@@ -36,6 +36,8 @@ async def show_home(bot: Bot, uid: int, event=None):
         return await out(t("a_hello", lang), admin_kb(lang))
 
     drv = await db.get_driver(uid)
+    if drv and drv["status"] == "removed":
+        drv = None  # chiqarilgan shofyor qaytadan ariza yubora oladi
     if drv:
         st = drv["status"]
         if st == "pending":

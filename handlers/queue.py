@@ -18,17 +18,18 @@ async def join(cb: CallbackQuery, bot: Bot):
     lang = await db.get_lang(uid)
     async with LOCK:
         d = await db.get_driver(uid)
-        if not services.driver_ok(d):
+        admin = services.is_admin(uid)
+        if not admin and not services.driver_ok(d):
             return await cb.answer(t("q_notdrv", lang), show_alert=True)
         o = await db.get_order(oid)
         if not o or o["status"] != "open":
             return await cb.answer(t("q_taken", lang), show_alert=True)
-        if d["balance"] <= 0:
+        if not admin and d["balance"] <= 0:
             return await cb.answer(t("q_nomoney", lang), show_alert=True)
         if await db.q1("SELECT 1 FROM queue WHERE order_id=? AND slot=? AND state IN ('queued','offered')", (oid, slot)):
             await cb.answer(t("q_busy", lang), show_alert=True)
             return await services.refresh_group(bot, oid)
-        if await db.q1("SELECT 1 FROM queue WHERE order_id=? AND driver_id=?", (oid, uid)):
+        if await db.q1("SELECT 1 FROM queue WHERE order_id=? AND driver_id=? AND state IN ('queued','offered')", (oid, uid)):
             return await cb.answer(t("q_dup", lang), show_alert=True)
         await db.ex("INSERT INTO queue(order_id,slot,driver_id,state) VALUES(?,?,?,'queued')", (oid, slot, uid))
         await cb.answer(t("q_joined", lang))
@@ -61,22 +62,24 @@ async def accept(cb: CallbackQuery, bot: Bot):
             await db.ex("UPDATE queue SET state='closed' WHERE id=?", (qid,))
             await cb.answer()
             return await _edit(cb, t("order_gone", lang))
-        if not services.driver_ok(d):
+        admin = services.is_admin(uid)
+        if not admin and not services.driver_ok(d):
             await db.ex("UPDATE queue SET state='skipped' WHERE id=?", (qid,))
             await cb.answer()
             await _edit(cb, t("frozen_txt", lang))
             await services.advance(bot, oid, prefix=True)
         else:
-            n = await db.exr("UPDATE drivers SET balance=balance-? WHERE tg_id=? AND balance>=?",
-                             (o["price"], uid, o["price"]))
+            n = 1 if admin else await db.exr("UPDATE drivers SET balance=balance-? WHERE tg_id=? AND balance>=?",
+                                             (o["price"], uid, o["price"]))
             if not n:
                 await db.ex("UPDATE queue SET state='skipped' WHERE id=?", (qid,))
                 await cb.answer()
                 await _edit(cb, t("insufficient", lang))
                 await services.advance(bot, oid, prefix=True)
             else:
-                await db.ex("INSERT INTO transactions(driver_id,amount,kind,ref) VALUES(?,?,?,?)",
-                            (uid, -o["price"], "order", oid))
+                if not admin:
+                    await db.ex("INSERT INTO transactions(driver_id,amount,kind,ref) VALUES(?,?,?,?)",
+                                (uid, -o["price"], "order", oid))
                 await db.ex("UPDATE orders SET status='accepted', accepted_by=?, accepted_at=datetime('now','localtime') WHERE id=?",
                             (uid, oid))
                 await db.ex("UPDATE queue SET state='accepted' WHERE id=?", (qid,))
@@ -84,8 +87,13 @@ async def accept(cb: CallbackQuery, bot: Bot):
                 await db.ex("UPDATE queue SET state='closed' WHERE order_id=? AND id!=? AND state IN ('queued','offered')", (oid, qid))
                 d2 = await db.get_driver(uid)
                 await cb.answer("✅")
-                await _edit(cb, t("acc_ok", lang, price=fmt(o["price"]), bal=fmt(d2["balance"]),
-                                  details=services.order_details(o)))
+                if admin:
+                    acc_text = t("acc_ok_admin", lang, details=services.order_details(o))
+                else:
+                    acc_text = t("acc_ok", lang, price=fmt(o["price"]), bal=fmt(d2["balance"]),
+                                 details=services.order_details(o))
+                pr = services.profile_row(o, lang)
+                await _edit(cb, acc_text, kb(pr) if pr else None)
                 for r in others:
                     try:
                         l2 = await db.get_lang(r["driver_id"])

@@ -57,6 +57,26 @@ async def low_check(bot: Bot, did: int):
             log.warning("low notify: %s", e)
 
 
+def is_admin(uid):
+    return uid in config.ADMIN_IDS
+
+
+async def display_name(uid):
+    d = await db.get_driver(uid)
+    if d and d["name"]:
+        return d["name"]
+    u = await db.q1("SELECT full_name FROM users WHERE tg_id=?", (uid,))
+    return (u["full_name"] if u and u["full_name"] else "Admin")
+
+
+def profile_row(o, lang):
+    """Zakazda telefon o'rniga username bo'lsa — 'Profilga o'tish' tugmasi."""
+    ph = str(o["phone"] or "")
+    if ph.startswith("@"):
+        return [B(t("btn_profile", lang), url=f"https://t.me/{ph[1:]}")]
+    return None
+
+
 def driver_ok(d):
     return bool(d) and d["status"] == "approved" and not d["frozen"]
 
@@ -67,14 +87,15 @@ def order_details(o, with_phone=True):
     if o["route"]:
         lines.append(f"📍 {esc(o['route'])}")
     lines.append(f"📝 {esc(o['text'])}")
-    if with_phone:
+    if with_phone and o["phone"] and not str(o["phone"]).startswith("@"):
         lines.append(f"📞 Telefon: {esc(o['phone'])}")
     return "\n".join(lines) + "\n"
 
 
 async def queue_slots(oid):
-    rows = await db.qa("""SELECT q.slot, q.driver_id, d.name FROM queue q
+    rows = await db.qa("""SELECT q.slot, q.driver_id, COALESCE(d.name, u.full_name) AS name FROM queue q
                           LEFT JOIN drivers d ON d.tg_id=q.driver_id
+                          LEFT JOIN users u ON u.tg_id=q.driver_id
                           WHERE q.order_id=? AND q.state IN ('queued','offered')""", (oid,))
     return {r["slot"]: r for r in rows}
 
@@ -92,8 +113,7 @@ async def render_group(o):
     route = f"📍 {esc(o['route'])}\n" if o["route"] else ""
     txt = t("g_order", "cr", id=o["id"], route=route, text=esc(o["text"]), queue=await queue_text(o["id"]))
     if o["status"] == "accepted":
-        d = await db.get_driver(o["accepted_by"])
-        txt += t("g_accepted", "cr", link=ulink(o["accepted_by"], d["name"] if d else "Shofyor"))
+        txt += t("g_accepted", "cr", link=ulink(o["accepted_by"], await display_name(o["accepted_by"])))
     elif o["status"] == "cancelled":
         txt += t("g_cancelled", "cr")
     return txt
@@ -105,7 +125,7 @@ async def group_kb(o):
     slots = await queue_slots(o["id"])
     rows = []
     for i in (1, 2, 3):
-        rows.append([B(("🔴 " if i in slots else "🟢 ") + str(i), f"q:{o['id']}:{i}")])
+        rows.append([B((f"🔴 {i} — Занято") if i in slots else (f"🟢 {i} — В очередь"), f"q:{o['id']}:{i}")])
     return kb(*rows)
 
 
@@ -135,7 +155,11 @@ async def offer(bot: Bot, qrow, prefix=False) -> bool:
     lang = await db.get_lang(qrow["driver_id"])
     text = t("offer", lang, id=o["id"], prefix=t("offer_prefix", lang) if prefix else "",
              details=order_details(o), price=fmt(o["price"]))
-    markup = kb([B(t("btn_accept", lang), f"qa:{qrow['id']}")], [B(t("btn_pass", lang), f"qp:{qrow['id']}")])
+    rows = [[B(t("btn_accept", lang), f"qa:{qrow['id']}")], [B(t("btn_pass", lang), f"qp:{qrow['id']}")]]
+    pr = profile_row(o, lang)
+    if pr:
+        rows.insert(0, pr)
+    markup = kb(*rows)
     try:
         m = await bot.send_message(qrow["driver_id"], text, reply_markup=markup)
     except Exception as e:
@@ -158,7 +182,7 @@ async def advance(bot: Bot, oid: int, prefix=False):
         if not nxt:
             return
         d = await db.get_driver(nxt["driver_id"])
-        if not driver_ok(d) or d["balance"] <= 0:
+        if not is_admin(nxt["driver_id"]) and (not driver_ok(d) or d["balance"] <= 0):
             await db.ex("UPDATE queue SET state='skipped' WHERE id=?", (nxt["id"],))
             continue
         if await offer(bot, nxt, prefix):
