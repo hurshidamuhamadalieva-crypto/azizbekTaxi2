@@ -175,6 +175,7 @@ async def advance(bot: Bot, oid: int, prefix=False):
     o = await db.get_order(oid)
     if not o or o["status"] != "open":
         return
+    order_price = int(o["price"] or 0)
     while True:
         if await db.q1("SELECT 1 FROM queue WHERE order_id=? AND state='offered'", (oid,)):
             return
@@ -182,7 +183,8 @@ async def advance(bot: Bot, oid: int, prefix=False):
         if not nxt:
             return
         d = await db.get_driver(nxt["driver_id"])
-        if not is_admin(nxt["driver_id"]) and (not driver_ok(d) or d["balance"] <= 0):
+        bal = int(d["balance"] or 0) if d else 0
+        if not is_admin(nxt["driver_id"]) and (not driver_ok(d) or bal < order_price):
             await db.ex("UPDATE queue SET state='skipped' WHERE id=?", (nxt["id"],))
             continue
         if await offer(bot, nxt, prefix):

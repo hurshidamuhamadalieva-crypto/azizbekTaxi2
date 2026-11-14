@@ -51,17 +51,24 @@ def _tr_chunk(s: str) -> str:
     return "".join(out)
 
 
-@lru_cache(maxsize=2048)
 def to_cyr(text: str) -> str:
     parts = _PROTECT.split(text)
     return "".join(p if (i % 2 == 1) else _tr_chunk(p) for i, p in enumerate(parts))
 
 
+_T_CR = None
+
+
+def _get_cr_dict():
+    global _T_CR
+    if _T_CR is None:
+        _T_CR = {k: to_cyr(v) for k, v in T.items()}
+    return _T_CR
+
+
 def t(key: str, lang: str = "uz", **kw) -> str:
-    tpl = T[key]
-    if lang == "cr":
-        tpl = to_cyr(tpl)
-    return tpl.format(**kw)
+    tpl = _get_cr_dict().get(key, T.get(key, "")) if lang == "cr" else T.get(key, "")
+    return tpl.format(**kw) if kw else tpl
 
 
 T = {
@@ -129,6 +136,7 @@ T = {
     # ---------- navbat / zakaz (shofyor) ----------
     "q_notdrv": "⚠️ Siz faol shofyor emassiz.",
     "q_nomoney": "❌ Hisobingizda mablag' yo'q. Iltimos, hisobingizni to'ldiring!",
+    "q_low_balance": "❌ Hisobingizda mablag' yetarli emas!\n\n💵 Zakaz narxi: {price} so'm\n💰 Balansingiz: {bal} so'm\n\nIltimos, hisobingizni to'ldiring.",
     "q_busy": "⚠️ Bu navbat band!",
     "q_taken": "⚠️ Zakaz band qilingan!",
     "q_joined": "✅ Navbatga qo'shildingiz!",

@@ -29,6 +29,14 @@ CREATE TABLE IF NOT EXISTS payments(
 CREATE TABLE IF NOT EXISTS transactions(
   id INTEGER PRIMARY KEY AUTOINCREMENT, driver_id INTEGER, amount INTEGER,
   kind TEXT, ref INTEGER, created TEXT DEFAULT (datetime('now','localtime')));
+
+CREATE INDEX IF NOT EXISTS idx_queue_order_state ON queue(order_id, state);
+CREATE INDEX IF NOT EXISTS idx_queue_driver_state ON queue(driver_id, state);
+CREATE INDEX IF NOT EXISTS idx_queue_order_slot ON queue(order_id, slot);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_drivers_status ON drivers(status);
+CREATE INDEX IF NOT EXISTS idx_transactions_driver ON transactions(driver_id);
+CREATE INDEX IF NOT EXISTS idx_payments_driver ON payments(driver_id);
 """
 
 
@@ -40,8 +48,19 @@ async def init():
     _db = await aiosqlite.connect(config.DB_PATH)
     _db.row_factory = aiosqlite.Row
     await _db.execute("PRAGMA journal_mode=WAL")
+    await _db.execute("PRAGMA synchronous=NORMAL")
+    await _db.execute("PRAGMA cache_size=-2000")
+    await _db.execute("PRAGMA temp_store=MEMORY")
+    await _db.execute("PRAGMA wal_autocheckpoint=100")
     await _db.executescript(SCHEMA)
     await _db.commit()
+
+
+async def close():
+    global _db
+    if _db is not None:
+        await _db.close()
+        _db = None
 
 
 async def q1(sql, args=()):
@@ -61,13 +80,17 @@ async def qa(sql, args=()):
 async def ex(sql, args=()):
     cur = await _db.execute(sql, args)
     await _db.commit()
-    return cur.lastrowid
+    lid = cur.lastrowid
+    await cur.close()
+    return lid
 
 
 async def exr(sql, args=()):
     cur = await _db.execute(sql, args)
     await _db.commit()
-    return cur.rowcount
+    rc = cur.rowcount
+    await cur.close()
+    return rc
 
 
 async def val(sql, args=()):

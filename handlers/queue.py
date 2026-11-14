@@ -24,8 +24,13 @@ async def join(cb: CallbackQuery, bot: Bot):
         o = await db.get_order(oid)
         if not o or o["status"] != "open":
             return await cb.answer(t("q_taken", lang), show_alert=True)
-        if not admin and d["balance"] <= 0:
-            return await cb.answer(t("q_nomoney", lang), show_alert=True)
+        order_price = int(o["price"] or 0)
+        driver_bal = int(d["balance"] or 0) if d else 0
+        if not admin and driver_bal < order_price:
+            return await cb.answer(
+                t("q_low_balance", lang, price=fmt(order_price), bal=fmt(driver_bal)),
+                show_alert=True,
+            )
         if await db.q1("SELECT 1 FROM queue WHERE order_id=? AND slot=? AND state IN ('queued','offered')", (oid, slot)):
             await cb.answer(t("q_busy", lang), show_alert=True)
             return await services.refresh_group(bot, oid)
